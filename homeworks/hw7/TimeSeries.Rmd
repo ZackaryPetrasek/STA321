@@ -1,0 +1,261 @@
+---
+title: "Time Series Decomposition of Weekly Electricity Usage"
+author: "Zackary Petrasek"
+date: "11/17/2026"
+output:
+  html_document: 
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    number_sections: yes
+    toc_collapsed: yes
+    code_folding: hide
+    code_download: yes
+    smooth_scroll: yes
+    theme: lumen
+  word_document: 
+    toc: yes
+    toc_depth: 4
+    fig_caption: yes
+    keep_md: yes
+  pdf_document: 
+    toc: yes
+    toc_depth: 4
+    fig_caption: yes
+    number_sections: yes
+    fig_width: 3
+    fig_height: 3
+editor_options: 
+  chunk_output_type: inline
+---
+```{=html}
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0;
+}
+h1.title {
+  font-size: 20px;
+  color: DarkRed;
+  text-align: center;
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkRed;
+  text-align: center;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+  text-align: center;
+}
+h1 { /* Header 3 - and the author and data headers use this too  */
+    font-size: 22px;
+    font-family: "Times New Roman", Times, serif;
+    color: darkred;
+    text-align: center;
+}
+h2 { /* Header 3 - and the author and data headers use this too  */
+    font-size: 18px;
+    font-family: "Times New Roman", Times, serif;
+    color: navy;
+    text-align: left;
+}
+
+h3 { /* Header 3 - and the author and data headers use this too  */
+    font-size: 15px;
+    font-family: "Times New Roman", Times, serif;
+    color: navy;
+    text-align: left;
+}
+
+h4 { /* Header 4 - and the author and data headers use this too  */
+    font-size: 18px;
+    font-family: "Times New Roman", Times, serif;
+    color: darkred;
+    text-align: left;
+}
+</style>
+```
+```{r setup, include=FALSE}
+if (!require("knitr")) {
+   install.packages("knitr")
+   library(knitr)
+}
+if (!require("openxlsx")) {
+   install.packages("openxlsx")
+   library(openxlsx)
+}
+if (!require("dplyr")) {
+   install.packages("dplyr")
+   library(dplyr)
+}
+if (!require("ggplot2")) {
+   install.packages("ggplot2")
+   library(ggplot2)
+}
+if (!require("tsibble")) {
+install.packages("tsibble")
+library(tsibble)
+}
+if (!require("tsibbledata")) {
+install.packages("tsibbledata")
+library(tsibbledata)
+}
+if (!require("forecast")) {
+install.packages("forecast")
+library(forecast)
+}
+
+
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      results = TRUE,
+                      message = FALSE,
+                      comment = NA)
+```
+
+
+# Introduction and Data Description
+
+The time series used in this case study is chosen from [https://forecastingdata.org/](https://forecastingdata.org/): 3-year weekly electricity usage in kiloWatts (kWs) from 370 different clients from a Portugese electricity company(156 observations per client). For the purpose of this assignment I took the mean of each week for all 370 clients to get a bigger picture of overall electricity usage across all of the clients. The data starts in January of 2012 and ends in December of 2014.
+
+
+```{r}
+tsdata <- monash_forecasting_repository(record_id = "4656141")
+
+new_series <- tsdata %>%
+  as_tibble() %>%
+  group_by(start_timestamp) %>%
+  summarise(aggregate_value = mean(value, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+## Define time series object
+
+Since this is weekly data, frequency = 52 will be used to define the time series object (a year has about 52 weeks). The 156 weekly averages cover three full years starting in January 2012.
+
+```{r  fig.align='center', fig.width=6, fig.height= 3, fig.cap="Average weekly electricity usage"}
+elec.ts = ts(new_series$aggregate_value, frequency = 52, start = c(2012, 1))
+par(mar=c(2,4,2,2))
+plot(elec.ts, main="Average Weekly Electricity Usage, 2012-2014", ylab="Average usage (kW)", xlab="")
+```
+
+Looking at the graph the biggest trend seems to be seasonal, with the peak time of the year seemingly from around April/May to around September/October. A plausible explanation is that air conditioning runs on electricity while much of the heating is done with gas and other fuel sources, although the data alone cannot confirm this. There is also a decreasing trend, with the yearly peaks getting lower over time, but it is not as noticeable as the seasonal pattern.
+
+## Forecasting with Decomposing
+
+The following visual representations show the different behaviors of the classical decomposition method and the STL method (which uses the LOESS smoother). We compare the trend, seasonal, and remainder components produced by the two methods.
+
+```{r fig.align='center', fig.cap= "Classical decomposition of additive time series", fig.width=7, fig.height=5.5}
+cls.decomp = decompose(elec.ts)
+par(mar=c(2,2,2,2))
+plot(cls.decomp, xlab="")
+```
+
+```{r fig.align='center', fig.cap= "STL decomposition of additive time series", fig.width=7, fig.height=4}
+stl.decomp = stl(elec.ts, s.window = 53)
+par(mar=c(2,2,2,2))
+plot(stl.decomp)
+```
+
+Both methods pick out the same strong yearly seasonal pattern and a downward trend. The main difference is that the classical method (which uses a moving average) cannot estimate the trend or the remainder for the first and last 26 weeks of the series, while STL gives estimates for every week. The STL trend is also a smoother line that follows the non-linear shape of the decline: it drops during 2012 and early 2013 and then levels off. This is why STL is the method used for forecasting below.
+
+## Training and Testing Data
+
+We hold up the **last 13 periods** (one quarter) of data for testing. The rest of the historical data will be used to train the forecast model. 
+
+To evaluate the effect of different sizes in training the time series, we define different training data sets with different sizes. Four training set sizes used in this example are 143, 133, 123, and 113. The smallest size must be more than 104 because `stl()` needs strictly more than two full seasonal periods (2 x 52 weeks). The same test set with size 13 will be used to calculate the prediction error.
+
+```{r}
+ini.data = new_series$aggregate_value
+n0 = length(ini.data)
+h = 13
+##
+train.end = n0 - h
+train.start = c(1, 11, 21, 31)      # start index of each training set
+train.size = train.end - train.start + 1
+## last 13 observations
+test.data = ini.data[(n0-h+1):n0]
+##
+## time (in decimal years) of each observation in the full series
+tm = time(elec.ts)
+##
+train01.ts = ts(ini.data[train.start[1]:train.end], frequency = 52, start = tm[train.start[1]])
+train02.ts = ts(ini.data[train.start[2]:train.end], frequency = 52, start = tm[train.start[2]])
+train03.ts = ts(ini.data[train.start[3]:train.end], frequency = 52, start = tm[train.start[3]])
+train04.ts = ts(ini.data[train.start[4]:train.end], frequency = 52, start = tm[train.start[4]])
+##
+stl01 = stl(train01.ts, s.window = 53)
+stl02 = stl(train02.ts, s.window = 53)
+stl03 = stl(train03.ts, s.window = 53)
+stl04 = stl(train04.ts, s.window = 53)
+## Forecast with decomposing
+fcst01 = forecast(stl01, h=h, method="naive")
+fcst02 = forecast(stl02, h=h, method="naive")
+fcst03 = forecast(stl03, h=h, method="naive")
+fcst04 = forecast(stl04, h=h, method="naive")
+```
+
+We next perform error analysis.
+
+```{r}
+## To compare different errors, we will not use the percentage for MAPE
+PE01=(test.data-fcst01$mean)/fcst01$mean
+PE02=(test.data-fcst02$mean)/fcst02$mean
+PE03=(test.data-fcst03$mean)/fcst03$mean
+PE04=(test.data-fcst04$mean)/fcst04$mean
+###
+MAPE1 = mean(abs(PE01))
+MAPE2 = mean(abs(PE02))
+MAPE3 = mean(abs(PE03))
+MAPE4 = mean(abs(PE04))
+###
+E1=test.data-fcst01$mean
+E2=test.data-fcst02$mean
+E3=test.data-fcst03$mean
+E4=test.data-fcst04$mean
+##
+MSE1=mean(E1^2)
+MSE2=mean(E2^2)
+MSE3=mean(E3^2)
+MSE4=mean(E4^2)
+###
+MSE=c(MSE1, MSE2, MSE3, MSE4)
+MAPE=c(MAPE1, MAPE2, MAPE3, MAPE4)
+accuracy=cbind(MSE=MSE, MAPE=MAPE)
+row.names(accuracy)=paste0("n.", train.size)
+kable(accuracy, caption="Error comparison between forecast results with different sample sizes")
+```
+
+```{r fig.align='center', fig.cap= "Comparing forecast errors", fig.width=9, fig.height=4.5}
+labs = paste0("n=", train.size)
+par(mfrow=c(1,2))
+plot(1:4, MSE, type="b", col="darkred", ylab="Error", xlab="",
+     ylim = range(MSE) + c(-0.1, 0.1) * diff(range(MSE)),
+     xlim = c(0.5, 4.5), main="MSE", axes=FALSE)
+axis(1, at=1:4, labels=labs, cex.axis=0.9)
+axis(2)
+text(1:4, MSE, format(MSE, scientific=TRUE, digits=3), col="blue", cex=0.7, pos=3)
+###
+plot(1:4, MAPE, type="b", col="darkred", ylab="Error", xlab="",
+     ylim = range(MAPE) + c(-0.1, 0.1) * diff(range(MAPE)),
+     xlim = c(0.5, 4.5), main="MAPE", axes=FALSE)
+axis(1, at=1:4, labels=labs, cex.axis=0.9)
+axis(2)
+text(1:4, MAPE, as.character(round(MAPE,4)), col="blue", cex=0.7, pos=3)
+```
+
+We trained the same algorithm with different sample sizes and compared the resulting accuracy measures. Among the four training sizes `r paste(train.size[-4], collapse = ", ")`, and `r train.size[4]`, training data size `r train.size[which.min(MSE)]` yields the smallest MSE and training data size `r train.size[which.min(MAPE)]` yields the smallest MAPE. The differences are fairly small, though (MAPE only ranges from `r round(min(MAPE), 3)` to `r round(max(MAPE), 3)`), and they are based on a test set of just 13 weeks, so the best training size should be read as a modest advantage rather than a decisive one.
+
+# Conclusion
+
+We can see through both classical and STL decomposition that there is a clear seasonal trend, with much higher energy usage in the warmer months compared to the cooler month, and a decrease in energy usage over the 3 year period of 2012-2014. The decrease was concentrated in 2012 and early 2013 and then leveled off. The seasonal pattern is likely related to how AC and heat work, with AC requiring electricity, and heat often using other forms of energy such as oil, although we cannot confirm this from the data alone. 
+
+Looking at the MSE and MAPE error terms we can see that a training period of 113 weeks outperforms 123 weeks, 133 weeks, and 143 weeks, when forecasting the next quarter (13 week)'s electricity usage, although the differences between the training sizes are small. We use STL decomposition compared to classical decomposition as it gives estimates of the trend and remainder for the entire series and uses LOESS smoothing, which handles the non-linear trend of the time series.
+
+We will start building actual and practical forecasting models in the next assignment - exponential smoothing models.
