@@ -126,8 +126,10 @@ The time series used in this case study is chosen from [https://forecastingdata.
 
 
 ```{r}
+# get data set 
 tsdata <- monash_forecasting_repository(record_id = "4656141")
 
+# create 1 time series based on the 370 clients
 new_series <- tsdata %>%
   as_tibble() %>%
   group_by(start_timestamp) %>%
@@ -140,6 +142,7 @@ new_series <- tsdata %>%
 Since this is weekly data, frequency = 52 will be used to define the time series object (a year has about 52 weeks). The 156 weekly averages cover three full years starting in January 2012.
 
 ```{r  fig.align='center', fig.width=6, fig.height= 3, fig.cap="Average weekly electricity usage"}
+# create plot to take a look at the time series
 elec.ts = ts(new_series$aggregate_value, frequency = 52, start = c(2012, 1))
 par(mar=c(2,4,2,2))
 plot(elec.ts, main="Average Weekly Electricity Usage, 2012-2014", ylab="Average usage (kW)", xlab="")
@@ -152,12 +155,14 @@ Looking at the graph the biggest trend seems to be seasonal, with the peak time 
 The following visual representations show the different behaviors of the classical decomposition method and the STL method (which uses the LOESS smoother). We compare the trend, seasonal, and remainder components produced by the two methods.
 
 ```{r fig.align='center', fig.cap= "Classical decomposition of additive time series", fig.width=7, fig.height=5.5}
+# create decomposition graph based on classical decomposition
 cls.decomp = decompose(elec.ts)
 par(mar=c(2,2,2,2))
 plot(cls.decomp, xlab="")
 ```
 
 ```{r fig.align='center', fig.cap= "STL decomposition of additive time series", fig.width=7, fig.height=4}
+# create decomposition graph based on STL decomposition
 stl.decomp = stl(elec.ts, s.window = 53)
 par(mar=c(2,2,2,2))
 plot(stl.decomp)
@@ -176,20 +181,21 @@ ini.data = new_series$aggregate_value
 n0 = length(ini.data)
 h = 13
 ##
+# set up start and end date for each training set
 train.end = n0 - h
-train.start = c(1, 11, 21, 31)      # start index of each training set
+train.start = c(1, 11, 21, 31)      
 train.size = train.end - train.start + 1
 ## last 13 observations
 test.data = ini.data[(n0-h+1):n0]
 ##
 ## time (in decimal years) of each observation in the full series
 tm = time(elec.ts)
-##
+## create new time series
 train01.ts = ts(ini.data[train.start[1]:train.end], frequency = 52, start = tm[train.start[1]])
 train02.ts = ts(ini.data[train.start[2]:train.end], frequency = 52, start = tm[train.start[2]])
 train03.ts = ts(ini.data[train.start[3]:train.end], frequency = 52, start = tm[train.start[3]])
 train04.ts = ts(ini.data[train.start[4]:train.end], frequency = 52, start = tm[train.start[4]])
-##
+## train a model to forecast
 stl01 = stl(train01.ts, s.window = 53)
 stl02 = stl(train02.ts, s.window = 53)
 stl03 = stl(train03.ts, s.window = 53)
@@ -204,27 +210,27 @@ fcst04 = forecast(stl04, h=h, method="naive")
 We next perform error analysis.
 
 ```{r}
-## To compare different errors, we will not use the percentage for MAPE
+## get predictive error for mape
 PE01=(test.data-fcst01$mean)/fcst01$mean
 PE02=(test.data-fcst02$mean)/fcst02$mean
 PE03=(test.data-fcst03$mean)/fcst03$mean
 PE04=(test.data-fcst04$mean)/fcst04$mean
-###
+### find mape for each training set
 MAPE1 = mean(abs(PE01))
 MAPE2 = mean(abs(PE02))
 MAPE3 = mean(abs(PE03))
 MAPE4 = mean(abs(PE04))
-###
+### gets errors for mse
 E1=test.data-fcst01$mean
 E2=test.data-fcst02$mean
 E3=test.data-fcst03$mean
 E4=test.data-fcst04$mean
-##
+## find mse for each training set
 MSE1=mean(E1^2)
 MSE2=mean(E2^2)
 MSE3=mean(E3^2)
 MSE4=mean(E4^2)
-###
+### create a table to report the mse and mape for each training set
 MSE=c(MSE1, MSE2, MSE3, MSE4)
 MAPE=c(MAPE1, MAPE2, MAPE3, MAPE4)
 accuracy=cbind(MSE=MSE, MAPE=MAPE)
@@ -233,6 +239,7 @@ kable(accuracy, caption="Error comparison between forecast results with differen
 ```
 
 ```{r fig.align='center', fig.cap= "Comparing forecast errors", fig.width=9, fig.height=4.5}
+# create the plots for mse and mape to report for each training number
 labs = paste0("n=", train.size)
 par(mfrow=c(1,2))
 plot(1:4, MSE, type="b", col="darkred", ylab="Error", xlab="",
@@ -251,6 +258,8 @@ text(1:4, MAPE, as.character(round(MAPE,4)), col="blue", cex=0.7, pos=3)
 ```
 
 We trained the same algorithm with different sample sizes and compared the resulting accuracy measures. Among the four training sizes `r paste(train.size[-4], collapse = ", ")`, and `r train.size[4]`, training data size `r train.size[which.min(MSE)]` yields the smallest MSE and training data size `r train.size[which.min(MAPE)]` yields the smallest MAPE. The differences are fairly small, though (MAPE only ranges from `r round(min(MAPE), 3)` to `r round(max(MAPE), 3)`), and they are based on a test set of just 13 weeks, so the best training size should be read as a modest advantage rather than a decisive one.
+
+If you look back to the decomposition graphs one possible reason for this is a shift in the trend which the higher observation training sets pick up on both trends while the smaller training set is able to have a clearer picture of the current trend it is predicting on.
 
 # Conclusion
 
